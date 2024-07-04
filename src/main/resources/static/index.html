@@ -8,6 +8,8 @@
     <script>
         var stompClient = null;
         var currentUser = null;
+        var isAnonymous = false; // 用于跟踪匿名模式
+        var hashvalue=generateRandomHash();
 
         function login() {
             var username = document.getElementById("login-username").value;
@@ -41,14 +43,20 @@
             stompClient = Stomp.over(socket);
             stompClient.connect({}, function (frame) {
                 console.log('Connected: ' + frame);
+
+                // 订阅公共频道
                 stompClient.subscribe('/topic/public', function (message) {
                     console.log('Received public message: ' + message.body);
                     showMessage(JSON.parse(message.body));
                 });
-                stompClient.subscribe('/user/queue/private', function (message) {
+
+                // 订阅私聊消息频道，路径为 /user/{username}/queue/private
+                var privateTopic = '/user/' + currentUser.username + '/queue/private';
+                stompClient.subscribe(privateTopic, function (message) {
                     console.log('Received private message: ' + message.body);
-                    showMessage(JSON.parse(message.body));
+                    showMessage(JSON.parse(message.body), true);
                 });
+                console.log('Subscribed to: ' + privateTopic);
             }, function (error) {
                 console.error('Connection error: ' + error);
             });
@@ -56,25 +64,70 @@
 
         function sendMessage() {
             var text = document.getElementById("text").value;
+            var from = isAnonymous ? "Anonymous-" + hashvalue : currentUser.username;
             var message = {
-                from: currentUser.username,
+                from: from,
                 text: text
             };
             console.log('Sending message: ', message);
             stompClient.send("/app/send", {}, JSON.stringify(message));
         }
 
-        function showMessage(message) {
+        function showMessage(message, isPrivate = false) {
             console.log('Displaying message: ', message);
             var response = document.getElementById("response");
             var p = document.createElement('p');
+            var isSend = false;
             p.appendChild(document.createTextNode(message.from + ": " + message.text));
+
+            // 检查消息是否由当前用户发送
+            if (message.from === currentUser.username) {
+                isSend = true;
+                shouldDisplay = true;
+            }
+
+            // 检查消息是否以 @currentUser.username* 开头
+            var text = message.text;
+
+            // 处理 @@quit 的特殊情况
+            if (text === '@@quit') {
+                // 弹出窗口要求用户刷新页面重新登录
+                alert("您已退出聊天室，请刷新页面重新登录。");
+                location.reload(); // 刷新页面
+            }
+            if (text.startsWith('@' + currentUser.username)) {
+                isPrivate = true;
+                shouldDisplay = true;
+            }
+
+            // 如果满足展示条件，则创建并添加消息元素
+            if (shouldDisplay) {
+                var p = document.createElement('p');
+                p.appendChild(document.createTextNode(message.from + ": " + message.text));
+                response.appendChild(p);
+            }
+
+            if (isPrivate) {
+                p.style.color = "red"; // 私聊信息用红色显示
+            }
+            if(isSend){
+                p.style.color = "green"; // 私聊信息用绿色显示
+            }
             response.appendChild(p);
         }
 
         function showChatRoom() {
             document.getElementById('login-form').style.display = 'none';
             document.getElementById('chat-room').style.display = 'block';
+        }
+
+        function toggleAnonymousMode() {
+            isAnonymous = !isAnonymous;
+            console.log('Anonymous mode: ' + (isAnonymous ? 'ON' : 'OFF'));
+        }
+
+        function generateRandomHash() {
+            return Math.random().toString(36).substr(2, 9); // 生成一个随机字符串
         }
 
         window.onload = function() {
@@ -91,6 +144,10 @@
 <div id="chat-room" style="display:none;">
     <input type="text" id="text" placeholder="Type your message here...">
     <button onclick="sendMessage()">Send</button>
+    <div>
+        <input type="checkbox" id="anonymous-mode" onclick="toggleAnonymousMode()">
+        <label for="anonymous-mode">Anonymous Mode</label>
+    </div>
     <div id="response"></div>
 </div>
 </body>
